@@ -1,0 +1,37 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id           String     @id @default(uuid())
+  name         String
+  email        String     @unique
+  passwordHash String
+  createdAt    DateTime   @default(now())
+  updatedAt    DateTime   @updatedAt
+  analyses     Analysis[]
+}
+
+model Analysis {
+  id                 String   @id @default(uuid())
+  userId             String
+  label              String?
+  sequence           String   @db.Text
+  sequenceLength     Int
+  adenineCount       Int
+  thymineCount       Int
+  guanineCount       Int
+  cytosineCount      Int
+  gcPercentage       Float
+  atPercentage       Float
+  reverseComplement  String   @db.Text
+  createdAt          DateTime @default(now())
+  user               User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, createdAt])
+}

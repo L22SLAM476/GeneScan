@@ -1,40 +1,39 @@
-import { useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import type { ChangeEvent } from "react";
-import {
-  analyzeDna,
-  formatPercentage,
-  SAMPLE_SEQUENCE,
-} from "./lib/dna";
+import { analyzeDna, formatPercentage, SAMPLE_SEQUENCE } from "./lib/dna";
 import type { DnaAnalysis } from "./lib/dna";
+import { api } from "./lib/api";
+import type { ApiAnalysis, ApiUser } from "./lib/api";
 
-interface HistoryItem {
-  id: string;
-  length: number;
-  gcPercentage: number;
-  analyzedAt: string;
-  sequence: string;
-}
-
-const HISTORY_KEY = "genescan.history.v1";
-
-function readHistory(): HistoryItem[] {
-  try {
-    const parsed: unknown = JSON.parse(localStorage.getItem(HISTORY_KEY) ?? "[]");
-    if (!Array.isArray(parsed)) return [];
-    return parsed.slice(0, 8) as HistoryItem[];
-  } catch {
-    return [];
-  }
-}
+type HistoryItem = ApiAnalysis;
 
 function App() {
   const [sequenceInput, setSequenceInput] = useState(SAMPLE_SEQUENCE);
   const [analysis, setAnalysis] = useState<DnaAnalysis | null>(() => analyzeDna(SAMPLE_SEQUENCE));
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
-  const [history, setHistory] = useState<HistoryItem[]>(readHistory);
+  const [history, setHistory] = useState<HistoryItem[]>([]);
+  const [user, setUser] = useState<ApiUser | null>(null);
+  const [authMode, setAuthMode] = useState<"login" | "register">("login");
+  const [authName, setAuthName] = useState("");
+  const [authEmail, setAuthEmail] = useState("");
+  const [authPassword, setAuthPassword] = useState("");
+  const [authBusy, setAuthBusy] = useState(false);
+  const [authError, setAuthError] = useState("");
+  const [saveToAccount, setSaveToAccount] = useState(false);
   const [isDragging, setIsDragging] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    let active = true;
+    api.me().then(async ({ user: currentUser }) => {
+      if (!active) return;
+      setUser(currentUser);
+      const saved = await api.analyses();
+      if (active) setHistory(saved.analyses);
+    }).catch(() => undefined);
+    return () => { active = false; };
+  }, []);
 
   const gcTone = useMemo(() => {
     if (!analysis) return "balanced";
@@ -43,20 +42,44 @@ function App() {
     return "balanced";
   }, [analysis]);
 
-  const saveHistory = (result: DnaAnalysis) => {
-    const item: HistoryItem = {
-      id: result.analyzedAt + "-" + result.length,
-      length: result.length,
-      gcPercentage: result.gcPercentage,
-      analyzedAt: result.analyzedAt,
-      sequence: result.sequence,
-    };
-    const next = [item, ...history.filter((entry) => entry.sequence !== result.sequence)].slice(0, 8);
-    setHistory(next);
+  const saveHistory = async (result: DnaAnalysis) => {
+    if (!user || !saveToAccount) return;
     try {
-      localStorage.setItem(HISTORY_KEY, JSON.stringify(next));
-    } catch {
-      setNotice("Analysis completed. Browser storage is unavailable, so history was not saved.");
+      const saved = await api.saveAnalysis(result.sequence);
+      setHistory((current) => [saved.analysis, ...current.filter((entry) => entry.id !== saved.analysis.id)].slice(0, 50));
+      setNotice("Analysis saved securely to your account.");
+    } catch (caught) {
+      setNotice(caught instanceof Error ? caught.message : "Analysis completed, but saving failed.");
+    }
+  };
+
+  const handleAuth = async () => {
+    setAuthBusy(true);
+    setAuthError("");
+    try {
+      const result = authMode === "register"
+        ? await api.register(authName, authEmail, authPassword)
+        : await api.login(authEmail, authPassword);
+      setUser(result.user);
+      setAuthPassword("");
+      const saved = await api.analyses();
+      setHistory(saved.analyses);
+      setNotice("Signed in as " + result.user.name + ".");
+    } catch (caught) {
+      setAuthError(caught instanceof Error ? caught.message : "Authentication failed.");
+    } finally {
+      setAuthBusy(false);
+    }
+  };
+
+  const handleLogout = async () => {
+    try {
+      await api.logout();
+    } finally {
+      setUser(null);
+      setHistory([]);
+      setSaveToAccount(false);
+      setNotice("You have been signed out.");
     }
   };
 
@@ -67,7 +90,7 @@ function App() {
       setSequenceInput(result.sequence);
       setError("");
       setNotice("Sequence analyzed successfully.");
-      saveHistory(result);
+      void saveHistory(result);
     } catch (caught) {
       setAnalysis(null);
       setError(caught instanceof Error ? caught.message : "Unable to analyze this sequence.");
@@ -130,7 +153,7 @@ function App() {
 
   const clearInput = () => {
     setSequenceInput("");
-    setAnalysis(null as unknown as DnaAnalysis);
+    setAnalysis(null);
     setError("");
     setNotice("");
   };
@@ -140,13 +163,19 @@ function App() {
     runAnalysis(item.sequence);
   };
 
+  const removeHistoryItem = async (id: string) => {
+    try {
+      await api.deleteAnalysis(id);
+      setHistory((current) => current.filter((entry) => entry.id !== id));
+      setNotice("Saved analysis deleted.");
+    } catch (caught) {
+      setNotice(caught instanceof Error ? caught.message : "Could not delete saved analysis.");
+    }
+  };
+
   const clearHistory = () => {
     setHistory([]);
-    try {
-      localStorage.removeItem(HISTORY_KEY);
-    } catch {
-      setNotice("Could not clear browser history storage.");
-    }
+    setNotice("History cleared from this view. Delete individual account records to remove them from the database.");
   };
 
   const hasAnalysis = analysis !== null;
@@ -164,20 +193,37 @@ function App() {
         <a className="nav-item" href="#history"><span className="nav-icon">◷</span> Recent analyses</a>
 
         <div className="sidebar-bottom">
-          <div className="side-status"><span className="status-dot" /> Local analysis engine</div>
+          <div className="side-status"><span className="status-dot" /> API-ready analysis engine</div>
           <div className="privacy-card">
             <span className="privacy-icon">⌑</span>
-            <strong>Your sequences stay yours.</strong>
-            <p>Analysis runs in your browser. Sequences are not sent to a server.</p>
+            <strong>Your data, your account.</strong>
+            <p>Analysis runs in the browser. Sequences are sent to the API only when you choose to save to your account.</p>
           </div>
           <div className="sidebar-foot">GENESCAN <span>·</span> VERSION 1.0</div>
         </div>
       </aside>
 
+      {authError || authMode === "register" ? <div className="auth-scrim" onClick={() => setAuthError("")}>
+        <form className="auth-modal panel" onSubmit={(event) => { event.preventDefault(); void handleAuth(); }} onClick={(event) => event.stopPropagation()}>
+          <button type="button" className="auth-close" aria-label="Close" onClick={() => setAuthError("")}>×</button>
+          <div className="eyebrow"><span /> GENESCAN ACCOUNT</div>
+          <h2>{authMode === "register" ? "Create your account" : "Sign in to GeneScan"}</h2>
+          <p>Save sequence analyses and access them from your other devices.</p>
+          {authMode === "register" && <label>Full name<input required minLength={2} maxLength={60} value={authName} onChange={(event) => setAuthName(event.target.value)} placeholder="Your name" /></label>}
+          <label>Email address<input required type="email" maxLength={254} value={authEmail} onChange={(event) => setAuthEmail(event.target.value)} placeholder="you@example.com" /></label>
+          <label>Password<input required type="password" minLength={8} maxLength={72} value={authPassword} onChange={(event) => setAuthPassword(event.target.value)} placeholder="At least 8 characters" /></label>
+          {authError && <div className="alert alert-error" role="alert">{authError}</div>}
+          <button className="button button-primary analyze-button" type="submit" disabled={authBusy}>{authBusy ? "Please wait…" : authMode === "register" ? "Create account" : "Sign in"} <span>→</span></button>
+          <div className="auth-switch">{authMode === "login" ? "New to GeneScan?" : "Already have an account?"} <button type="button" onClick={() => { setAuthMode(authMode === "login" ? "register" : "login"); setAuthError(""); }}>{authMode === "login" ? "Create an account" : "Sign in"}</button></div>
+          <div className="auth-privacy">Passwords are hashed by the server. Session cookies are HTTP-only.</div>
+        </form>
+      </div> : null}
       <main className="main-area">
         <header className="topbar">
           <div className="breadcrumb">Workspace <span>/</span> <strong>Sequence analyzer</strong></div>
-          <div className="topbar-right"><span className="engine-pill"><i /> ENGINE ONLINE</span><span className="avatar">GS</span></div>
+          <div className="topbar-right"><span className="engine-pill"><i /> API READY</span>
+            {user ? <><span className="signed-user">{user.name}</span><button className="text-button" onClick={() => void handleLogout()}>Sign out</button></> : <button className="top-auth-button" onClick={() => { setAuthMode("login"); setAuthError(""); }}>Sign in</button>}
+            <span className="avatar">{user ? user.name.slice(0, 2).toUpperCase() : "GS"}</span></div>
         </header>
 
         <div className="page-content">
@@ -190,6 +236,14 @@ function App() {
             <div className="heading-decoration" aria-hidden="true"><DnaMark /></div>
           </section>
 
+          {!user && <section className="account-banner">
+            <div><strong>Keep your research organized.</strong><span>Sign in to save analyses and access your sequence history across sessions.</span></div>
+            <button className="button button-secondary" onClick={() => { setAuthMode("register"); setAuthError(""); }}>Create free account →</button>
+          </section>}
+          {user && <section className="account-banner account-banner-signed">
+            <div><strong>Welcome back, {user.name}.</strong><span>Your saved analyses are linked to your GeneScan account.</span></div>
+            <label className="save-toggle"><input type="checkbox" checked={saveToAccount} onChange={(event) => setSaveToAccount(event.target.checked)} /> Save new analyses to account</label>
+          </section>}
           <section className="workspace-grid" id="analyzer">
             <div className="input-panel panel">
               <div className="panel-heading">
@@ -228,6 +282,7 @@ function App() {
                 Analyze sequence <span>→</span>
               </button>
               <div className="input-hint"><span>ⓘ</span> Valid DNA bases: A, T, G and C. Whitespace is ignored.</div>
+              {user && <div className="save-consent"><label><input type="checkbox" checked={saveToAccount} onChange={(event) => setSaveToAccount(event.target.checked)} /> I agree to save this sequence and its analysis in my account.</label></div>}
             </div>
 
             <div className="results-column">
@@ -276,19 +331,21 @@ function App() {
 
           <section className="history-section panel" id="history">
             <div className="card-title-row">
-              <div><div className="history-title"><span className="section-index">03</span><h2>Recent analyses</h2></div><p>Your latest sequences saved on this device.</p></div>
+              <div><div className="history-title"><span className="section-index">03</span><h2>Recent analyses</h2></div><p>{user ? "Your account's saved analysis records." : "Sign in to save analyses and build a personal history."}</p></div>
               {history.length > 0 && <button className="text-button" onClick={clearHistory}>Clear history</button>}
             </div>
             {history.length > 0 ? (
               <div className="history-list">
                 {history.map((item) => (
-                  <button className="history-item" key={item.id} onClick={() => loadHistoryItem(item)}>
-                    <span className="history-symbol">DNA</span>
-                    <span className="history-seq"><strong>{item.sequence.slice(0, 24)}{item.sequence.length > 24 ? "…" : ""}</strong><small>{new Date(item.analyzedAt).toLocaleString()}</small></span>
-                    <span className="history-stat"><strong>{item.length.toLocaleString()} bp</strong><small>Length</small></span>
-                    <span className="history-stat"><strong>{formatPercentage(item.gcPercentage)}</strong><small>GC content</small></span>
-                    <span className="history-open">↗</span>
-                  </button>
+                  <div className="history-item" key={item.id}>
+                    <button className="history-item-main" onClick={() => loadHistoryItem(item)}>
+                      <span className="history-symbol">DNA</span>
+                      <span className="history-seq"><strong>{item.sequence.slice(0, 24)}{item.sequence.length > 24 ? "…" : ""}</strong><small>{new Date(item.createdAt).toLocaleString()}</small></span>
+                      <span className="history-stat"><strong>{item.sequenceLength.toLocaleString()} bp</strong><small>Length</small></span>
+                      <span className="history-stat"><strong>{formatPercentage(item.gcPercentage)}</strong><small>GC content</small></span>
+                    </button>
+                    {user && <button className="history-delete" aria-label="Delete saved analysis" onClick={() => void removeHistoryItem(item.id)}>×</button>}
+                  </div>
                 ))}
               </div>
             ) : <div className="history-empty">No saved analyses yet. Run an analysis to add it here.</div>}
@@ -296,7 +353,7 @@ function App() {
 
           <footer className="page-footer">
             <span>© 2026 GeneScan <i /> Built for learning and sequence exploration.</span>
-            <span>DNA ANALYSIS <i /> CLIENT-SIDE PROCESSING</span>
+            <span>DNA ANALYSIS <i /> CONSENT-BASED ACCOUNT STORAGE</span>
           </footer>
         </div>
       </main>

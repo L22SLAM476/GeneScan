@@ -13,6 +13,5 @@ async function shutdown(signal: string) {
     process.exit(0);
   });
 }
-
 process.on("SIGINT", () => void shutdown("SIGINT"));
 process.on("SIGTERM", () => void shutdown("SIGTERM"));

@@ -9,7 +9,6 @@ const createSchema = z.object({
   sequence: z.string().min(1).max(1_100_000),
   label: z.string().trim().max(80).optional(),
 });
-
 router.use(requireAuth);
 
 router.post("/", async (request: AuthenticatedRequest, response, next) => {
@@ -19,17 +18,13 @@ router.post("/", async (request: AuthenticatedRequest, response, next) => {
       response.status(400).json({ error: "Provide a DNA sequence of up to 1,000,000 bases." });
       return;
     }
-
     let result;
     try {
       result = analyzeDna(parsed.data.sequence);
     } catch (error) {
-      response.status(422).json({
-        error: error instanceof Error ? error.message : "Invalid DNA sequence.",
-      });
+      response.status(422).json({ error: error instanceof Error ? error.message : "Invalid DNA sequence." });
       return;
     }
-
     const analysis = await prisma.analysis.create({
       data: {
         userId: request.userId!,
@@ -76,10 +71,7 @@ router.delete("/:id", async (request: AuthenticatedRequest, response, next) => {
       response.status(400).json({ error: "Invalid analysis ID." });
       return;
     }
-
-    const result = await prisma.analysis.deleteMany({
-      where: { id: id.data, userId: request.userId! },
-    });
+    const result = await prisma.analysis.deleteMany({ where: { id: id.data, userId: request.userId! } });
     if (result.count === 0) {
       response.status(404).json({ error: "Analysis was not found." });
       return;

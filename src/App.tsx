@@ -29,7 +29,7 @@ function readHistory(): HistoryItem[] {
 
 function App() {
   const [sequenceInput, setSequenceInput] = useState(SAMPLE_SEQUENCE);
-  const [analysis, setAnalysis] = useState<DnaAnalysis>(() => analyzeDna(SAMPLE_SEQUENCE));
+  const [analysis, setAnalysis] = useState<DnaAnalysis | null>(() => analyzeDna(SAMPLE_SEQUENCE));
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
   const [history, setHistory] = useState<HistoryItem[]>(readHistory);
@@ -69,7 +69,7 @@ function App() {
       setNotice("Sequence analyzed successfully.");
       saveHistory(result);
     } catch (caught) {
-      setAnalysis(null as unknown as DnaAnalysis);
+      setAnalysis(null);
       setError(caught instanceof Error ? caught.message : "Unable to analyze this sequence.");
       setNotice("");
     }
@@ -149,7 +149,7 @@ function App() {
     }
   };
 
-  const hasAnalysis = Boolean(analysis);
+  const hasAnalysis = analysis !== null;
 
   return (
     <div className="app-shell">
@@ -236,7 +236,7 @@ function App() {
                 {hasAnalysis && <button className="export-button" onClick={exportCsv}><DownloadIcon /> Export CSV</button>}
               </div>
 
-              {hasAnalysis ? (
+              {analysis ? (
                 <>
                   <div className="metric-grid">
                     <MetricCard label="Sequence length" value={analysis.length.toLocaleString()} unit="bp" detail="Total nucleotide bases" icon="↔" />

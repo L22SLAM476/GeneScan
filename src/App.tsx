@@ -203,7 +203,7 @@ function App() {
         </div>
       </aside>
 
-      {authError || authMode === "register" ? <div className="auth-scrim" onClick={() => setAuthError("")}>
+      {(authError || authMode === "register") && <div className="auth-scrim" onClick={() => setAuthError("")}>
         <form className="auth-modal panel" onSubmit={(event) => { event.preventDefault(); void handleAuth(); }} onClick={(event) => event.stopPropagation()}>
           <button type="button" className="auth-close" aria-label="Close" onClick={() => setAuthError("")}>×</button>
           <div className="eyebrow"><span /> GENESCAN ACCOUNT</div>
@@ -217,7 +217,7 @@ function App() {
           <div className="auth-switch">{authMode === "login" ? "New to GeneScan?" : "Already have an account?"} <button type="button" onClick={() => { setAuthMode(authMode === "login" ? "register" : "login"); setAuthError(""); }}>{authMode === "login" ? "Create an account" : "Sign in"}</button></div>
           <div className="auth-privacy">Passwords are hashed by the server. Session cookies are HTTP-only.</div>
         </form>
-      </div> : null}
+      </div>}
       <main className="main-area">
         <header className="topbar">
           <div className="breadcrumb">Workspace <span>/</span> <strong>Sequence analyzer</strong></div>
